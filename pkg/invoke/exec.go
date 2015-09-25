@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 
 	"github.com/appc/cni/pkg/types"
 )
@@ -73,7 +74,14 @@ func execPlugin(pluginPath string, netconf []byte, args CNIArgs) ([]byte, error)
 		Stderr: os.Stderr,
 	}
 	if err := c.Run(); err != nil {
-		return nil, pluginErr(err, stdout.Bytes())
+		// Ignore EPIPE errors copying to stdin if the program
+		// completed successfully otherwise.
+		// See Go Issue 9173.
+		if pe, ok := err.(*os.PathError); !ok ||
+			pe.Op != "write" || pe.Path != "|1" ||
+			pe.Err != syscall.EPIPE {
+			return nil, pluginErr(err, stdout.Bytes())
+		}
 	}
 
 	return stdout.Bytes(), nil
