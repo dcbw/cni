@@ -138,16 +138,16 @@ func ensureBridge(brName string, mtu int) (*netlink.Bridge, error) {
 		},
 	}
 
-	if err := netlink.LinkAdd(br); err != nil {
-		if err != syscall.EEXIST {
-			return nil, fmt.Errorf("could not add %q: %v", brName, err)
-		}
+	err := netlink.LinkAdd(br)
+	if err != nil && err != syscall.EEXIST {
+		return nil, fmt.Errorf("could not add %q: %v", brName, err)
+	}
 
-		// it's ok if the device already exists as long as config is similar
-		br, err = bridgeByName(brName)
-		if err != nil {
-			return nil, err
-		}
+	// Re-fetch link to read all attributes and if it already existed,
+	// ensure it's really a bridge with similar configuration
+	br, err = bridgeByName(brName)
+	if err != nil {
+		return nil, err
 	}
 
 	if err := netlink.LinkSetUp(br); err != nil {
@@ -157,40 +157,44 @@ func ensureBridge(brName string, mtu int) (*netlink.Bridge, error) {
 	return br, nil
 }
 
-func setupVeth(netns ns.NetNS, br *netlink.Bridge, ifName string, mtu int, hairpinMode bool) error {
-	var hostVethName string
+func setupVeth(netns ns.NetNS, br *netlink.Bridge, ifName string, mtu int, hairpinMode bool) (*types.Interface, *types.Interface, error) {
+	contIface := &types.Interface{}
+	hostIface := &types.Interface{}
 
 	err := netns.Do(func(hostNS ns.NetNS) error {
 		// create the veth pair in the container and move host end into host netns
-		hostVeth, _, err := ip.SetupVeth(ifName, mtu, hostNS)
+		hostVeth, containerVeth, err := ip.SetupVeth(ifName, mtu, hostNS)
 		if err != nil {
 			return err
 		}
-
-		hostVethName = hostVeth.Attrs().Name
+		contIface.Name = containerVeth.Attrs().Name
+		contIface.Mac = containerVeth.Attrs().HardwareAddr.String()
+		contIface.Sandbox = netns.Path()
+		hostIface.Name = hostVeth.Attrs().Name
 		return nil
 	})
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 
 	// need to lookup hostVeth again as its index has changed during ns move
-	hostVeth, err := netlink.LinkByName(hostVethName)
+	hostVeth, err := netlink.LinkByName(hostIface.Name)
 	if err != nil {
-		return fmt.Errorf("failed to lookup %q: %v", hostVethName, err)
+		return nil, nil, fmt.Errorf("failed to lookup %q: %v", hostIface.Name, err)
 	}
+	hostIface.Mac = hostVeth.Attrs().HardwareAddr.String()
 
 	// connect host veth end to the bridge
-	if err = netlink.LinkSetMaster(hostVeth, br); err != nil {
-		return fmt.Errorf("failed to connect %q to bridge %v: %v", hostVethName, br.Attrs().Name, err)
+	if err := netlink.LinkSetMaster(hostVeth, br); err != nil {
+		return nil, nil, fmt.Errorf("failed to connect %q to bridge %v: %v", hostVeth.Attrs().Name, br.Attrs().Name, err)
 	}
 
 	// set hairpin mode
 	if err = netlink.LinkSetHairpin(hostVeth, hairpinMode); err != nil {
-		return fmt.Errorf("failed to setup hairpin mode for %v: %v", hostVethName, err)
+		return nil, nil, fmt.Errorf("failed to setup hairpin mode for %v: %v", hostVeth.Attrs().Name, err)
 	}
 
-	return nil
+	return hostIface, contIface, nil
 }
 
 func calcGatewayIP(ipn *net.IPNet) net.IP {
@@ -198,14 +202,17 @@ func calcGatewayIP(ipn *net.IPNet) net.IP {
 	return ip.NextIP(nid)
 }
 
-func setupBridge(n *NetConf) (*netlink.Bridge, error) {
+func setupBridge(n *NetConf) (*netlink.Bridge, *types.Interface, error) {
 	// create bridge if necessary
 	br, err := ensureBridge(n.BrName, n.MTU)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create bridge %q: %v", n.BrName, err)
+		return nil, nil, fmt.Errorf("failed to create bridge %q: %v", n.BrName, err)
 	}
 
-	return br, nil
+	return br, &types.Interface{
+		Name: br.Attrs().Name,
+		Mac:  br.Attrs().HardwareAddr.String(),
+	}, nil
 }
 
 func cmdAdd(args *skel.CmdArgs) error {
@@ -218,7 +225,7 @@ func cmdAdd(args *skel.CmdArgs) error {
 		n.IsGW = true
 	}
 
-	br, err := setupBridge(n)
+	br, brInterface, err := setupBridge(n)
 	if err != nil {
 		return err
 	}
@@ -229,7 +236,8 @@ func cmdAdd(args *skel.CmdArgs) error {
 	}
 	defer netns.Close()
 
-	if err = setupVeth(netns, br, args.IfName, n.MTU, n.HairpinMode); err != nil {
+	hostInterface, containerInterface, err := setupVeth(netns, br, args.IfName, n.MTU, n.HairpinMode)
+	if err != nil {
 		return err
 	}
 
@@ -239,49 +247,68 @@ func cmdAdd(args *skel.CmdArgs) error {
 		return err
 	}
 
-	// TODO: make this optional when IPv6 is supported
-	if result.IP4 == nil {
-		return errors.New("IPAM plugin returned missing IPv4 config")
+	if len(result.IP) == 0 {
+		return errors.New("IPAM plugin returned missing IP config")
 	}
 
-	if result.IP4.Gateway == nil && n.IsGW {
-		result.IP4.Gateway = calcGatewayIP(&result.IP4.IP)
+	result.Interfaces = []*types.Interface{brInterface, hostInterface, containerInterface}
+
+	for _, ipc := range result.IP {
+		// All IPs currently refer to the container interface
+		ipc.Interface = 2
+		if ipc.Gateway == nil && n.IsGW {
+			ipc.Gateway = calcGatewayIP(&ipc.Address)
+		}
 	}
 
 	if err := netns.Do(func(_ ns.NetNS) error {
 		// set the default gateway if requested
 		if n.IsDefaultGW {
-			_, defaultNet, err := net.ParseCIDR("0.0.0.0/0")
-			if err != nil {
-				return err
-			}
+			for _, ipc := range result.IP {
+				defaultNet := &net.IPNet{}
+				switch {
+				case ipc.Address.IP.To4() != nil:
+					defaultNet.IP = net.IPv4zero
+					defaultNet.Mask = net.IPMask(net.IPv4zero)
+				case len(ipc.Address.IP) == net.IPv6len && ipc.Address.IP.To4() == nil:
+					defaultNet.IP = net.IPv6zero
+					defaultNet.Mask = net.IPMask(net.IPv6zero)
+				default:
+					return fmt.Errorf("Unknown IP object: %v", ipc)
+				}
 
-			for _, route := range result.IP4.Routes {
-				if defaultNet.String() == route.Dst.String() {
-					if route.GW != nil && !route.GW.Equal(result.IP4.Gateway) {
-						return fmt.Errorf(
-							"isDefaultGateway ineffective because IPAM sets default route via %q",
-							route.GW,
-						)
+				for _, route := range ipc.Routes {
+					if defaultNet.String() == route.Dst.String() {
+						if route.GW != nil && !route.GW.Equal(ipc.Gateway) {
+							return fmt.Errorf(
+								"isDefaultGateway ineffective because IPAM sets default route via %q",
+								route.GW,
+							)
+						}
 					}
 				}
+
+				ipc.Routes = append(
+					ipc.Routes,
+					types.Route{Dst: *defaultNet, GW: ipc.Gateway},
+				)
 			}
-
-			result.IP4.Routes = append(
-				result.IP4.Routes,
-				types.Route{Dst: *defaultNet, GW: result.IP4.Gateway},
-			)
-
-			// TODO: IPV6
 		}
 
 		if err := ipam.ConfigureIface(args.IfName, result); err != nil {
 			return err
 		}
 
-		if err := ip.SetHWAddrByIP(args.IfName, result.IP4.IP.IP, nil /* TODO IPv6 */); err != nil {
+		if err := ip.SetHWAddrByIP(args.IfName, result.IP[0].Address.IP, nil /* TODO IPv6 */); err != nil {
 			return err
 		}
+
+		// Refetch the veth since its MAC address may changed
+		link, err := netlink.LinkByName(args.IfName)
+		if err != nil {
+			return fmt.Errorf("could not lookup %q: %v", args.IfName, err)
+		}
+		containerInterface.Mac = link.Attrs().HardwareAddr.String()
 
 		return nil
 	}); err != nil {
@@ -289,17 +316,25 @@ func cmdAdd(args *skel.CmdArgs) error {
 	}
 
 	if n.IsGW {
-		gwn := &net.IPNet{
-			IP:   result.IP4.Gateway,
-			Mask: result.IP4.IP.Mask,
+		var firstV4Addr net.IP
+		for _, ipc := range result.IP {
+			gwn := &net.IPNet{
+				IP:   ipc.Gateway,
+				Mask: ipc.Address.Mask,
+			}
+			if ipc.Gateway.To4() != nil && firstV4Addr == nil {
+				firstV4Addr = ipc.Gateway
+			}
+
+			if err = ensureBridgeAddr(br, gwn, n.ForceAddress); err != nil {
+				return err
+			}
 		}
 
-		if err = ensureBridgeAddr(br, gwn, n.ForceAddress); err != nil {
-			return err
-		}
-
-		if err := ip.SetHWAddrByIP(n.BrName, gwn.IP, nil /* TODO IPv6 */); err != nil {
-			return err
+		if firstV4Addr != nil {
+			if err := ip.SetHWAddrByIP(n.BrName, firstV4Addr, nil /* TODO IPv6 */); err != nil {
+				return err
+			}
 		}
 
 		if err := ip.EnableIP4Forward(); err != nil {
@@ -310,10 +345,20 @@ func cmdAdd(args *skel.CmdArgs) error {
 	if n.IPMasq {
 		chain := utils.FormatChainName(n.Name, args.ContainerID)
 		comment := utils.FormatComment(n.Name, args.ContainerID)
-		if err = ip.SetupIPMasq(ip.Network(&result.IP4.IP), chain, comment); err != nil {
-			return err
+		for _, ipc := range result.IP {
+			if err = ip.SetupIPMasq(ip.Network(&ipc.Address), chain, comment); err != nil {
+				return err
+			}
 		}
 	}
+
+	// Refetch the bridge since its MAC address may change when the first
+	// veth is added or after its IP address is set
+	br, err = bridgeByName(n.BrName)
+	if err != nil {
+		return err
+	}
+	brInterface.Mac = br.Attrs().HardwareAddr.String()
 
 	result.DNS = n.DNS
 	return result.Print()

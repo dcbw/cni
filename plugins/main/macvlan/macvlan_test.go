@@ -16,6 +16,8 @@ package main
 
 import (
 	"fmt"
+	"net"
+	"syscall"
 
 	"github.com/containernetworking/cni/pkg/ns"
 	"github.com/containernetworking/cni/pkg/skel"
@@ -80,7 +82,7 @@ var _ = Describe("macvlan Operations", func() {
 		err = originalNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 
-			err = createMacvlan(conf, "foobar0", targetNs)
+			_, err = createMacvlan(conf, "foobar0", targetNs)
 			Expect(err).NotTo(HaveOccurred())
 			return nil
 		})
@@ -123,14 +125,17 @@ var _ = Describe("macvlan Operations", func() {
 			StdinData:   []byte(conf),
 		}
 
-		// Make sure macvlan link exists in the target namespace
+		var result *types.Result
 		err = originalNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 
-			_, err := testutils.CmdAddWithResult(targetNs.Path(), IFNAME, func() error {
+			result, err = testutils.CmdAddWithResult(targetNs.Path(), IFNAME, func() error {
 				return cmdAdd(args)
 			})
 			Expect(err).NotTo(HaveOccurred())
+			Expect(len(result.Interfaces)).To(Equal(1))
+			Expect(result.Interfaces[0].Name).To(Equal(IFNAME))
+			Expect(len(result.IP)).To(Equal(1))
 			return nil
 		})
 		Expect(err).NotTo(HaveOccurred())
@@ -143,9 +148,16 @@ var _ = Describe("macvlan Operations", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(link.Attrs().Name).To(Equal(IFNAME))
 
-			hwAddr := fmt.Sprintf("%s", link.Attrs().HardwareAddr)
-			Expect(hwAddr).To(HavePrefix(hwaddr.PrivateMACPrefixString))
+			hwaddrString := fmt.Sprintf("%s", link.Attrs().HardwareAddr)
+			Expect(hwaddrString).To(HavePrefix(hwaddr.PrivateMACPrefixString))
 
+			hwaddr, err := net.ParseMAC(result.Interfaces[0].Mac)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(link.Attrs().HardwareAddr).To(Equal(hwaddr))
+
+			addrs, err := netlink.AddrList(link, syscall.AF_INET)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(len(addrs)).To(Equal(1))
 			return nil
 		})
 		Expect(err).NotTo(HaveOccurred())

@@ -64,7 +64,7 @@ var _ = Describe("bridge Operations", func() {
 		err := originalNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 
-			bridge, err := setupBridge(conf)
+			bridge, _, err := setupBridge(conf)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(bridge.Attrs().Name).To(Equal(IFNAME))
 
@@ -105,7 +105,7 @@ var _ = Describe("bridge Operations", func() {
 				IPMasq: false,
 			}
 
-			bridge, err := setupBridge(conf)
+			bridge, _, err := setupBridge(conf)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(bridge.Attrs().Name).To(Equal(IFNAME))
 			Expect(bridge.Attrs().Index).To(Equal(ifindex))
@@ -151,18 +151,26 @@ var _ = Describe("bridge Operations", func() {
 			StdinData:   []byte(conf),
 		}
 
+		var result *types.Result
 		err = originalNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 
-			_, err := testutils.CmdAddWithResult(targetNs.Path(), IFNAME, func() error {
+			result, err = testutils.CmdAddWithResult(targetNs.Path(), IFNAME, func() error {
 				return cmdAdd(args)
 			})
 			Expect(err).NotTo(HaveOccurred())
+			Expect(len(result.Interfaces)).To(Equal(3))
+			Expect(result.Interfaces[0].Name).To(Equal(BRNAME))
+			Expect(result.Interfaces[2].Name).To(Equal(IFNAME))
 
 			// Make sure bridge link exists
-			link, err := netlink.LinkByName(BRNAME)
+			link, err := netlink.LinkByName(result.Interfaces[0].Name)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(link.Attrs().Name).To(Equal(BRNAME))
+			Expect(link).To(BeAssignableToTypeOf(&netlink.Bridge{}))
+			Expect(link.Attrs().HardwareAddr.String()).To(Equal(result.Interfaces[0].Mac))
+			hwAddr := fmt.Sprintf("%s", link.Attrs().HardwareAddr)
+			Expect(hwAddr).To(HavePrefix(hwaddr.PrivateMACPrefixString))
 
 			// Ensure bridge has gateway address
 			addrs, err := netlink.AddrList(link, syscall.AF_INET)
@@ -183,23 +191,10 @@ var _ = Describe("bridge Operations", func() {
 			links, err := netlink.LinkList()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(len(links)).To(Equal(3)) // Bridge, veth, and loopback
-			for _, l := range links {
-				switch {
-				case l.Attrs().Name == BRNAME:
-					{
-						_, isBridge := l.(*netlink.Bridge)
-						Expect(isBridge).To(Equal(true))
-						hwAddr := fmt.Sprintf("%s", l.Attrs().HardwareAddr)
-						Expect(hwAddr).To(HavePrefix(hwaddr.PrivateMACPrefixString))
-					}
-				case l.Attrs().Name != BRNAME && l.Attrs().Name != "lo":
-					{
-						_, isVeth := l.(*netlink.Veth)
-						Expect(isVeth).To(Equal(true))
-					}
-				}
-			}
+
+			link, err = netlink.LinkByName(result.Interfaces[1].Name)
 			Expect(err).NotTo(HaveOccurred())
+			Expect(link).To(BeAssignableToTypeOf(&netlink.Veth{}))
 			return nil
 		})
 		Expect(err).NotTo(HaveOccurred())
@@ -211,6 +206,11 @@ var _ = Describe("bridge Operations", func() {
 			link, err := netlink.LinkByName(IFNAME)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(link.Attrs().Name).To(Equal(IFNAME))
+			Expect(link).To(BeAssignableToTypeOf(&netlink.Veth{}))
+
+			addrs, err := netlink.AddrList(link, syscall.AF_INET)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(len(addrs)).To(Equal(1))
 
 			hwAddr := fmt.Sprintf("%s", link.Attrs().HardwareAddr)
 			Expect(hwAddr).To(HavePrefix(hwaddr.PrivateMACPrefixString))
@@ -243,7 +243,7 @@ var _ = Describe("bridge Operations", func() {
 		})
 		Expect(err).NotTo(HaveOccurred())
 
-		// Make sure macvlan link has been deleted
+		// Make sure the host veth has been deleted
 		err = targetNs.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 
@@ -253,6 +253,16 @@ var _ = Describe("bridge Operations", func() {
 			return nil
 		})
 		Expect(err).NotTo(HaveOccurred())
+
+		// Make sure the container veth has been deleted
+		err = originalNS.Do(func(ns.NetNS) error {
+			defer GinkgoRecover()
+
+			link, err := netlink.LinkByName(result.Interfaces[1].Name)
+			Expect(err).To(HaveOccurred())
+			Expect(link).To(BeNil())
+			return nil
+		})
 	})
 
 	It("ensure bridge address", func() {
@@ -285,7 +295,7 @@ var _ = Describe("bridge Operations", func() {
 		err := originalNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 
-			bridge, err := setupBridge(conf)
+			bridge, _, err := setupBridge(conf)
 			Expect(err).NotTo(HaveOccurred())
 			// Check if ForceAddress has default value
 			Expect(conf.ForceAddress).To(Equal(false))

@@ -39,7 +39,7 @@ var _ = Describe("Executing a plugin, unit tests", func() {
 
 	BeforeEach(func() {
 		rawExec = &fakes.RawExec{}
-		rawExec.ExecPluginCall.Returns.ResultBytes = []byte(`{ "ip4": { "ip": "1.2.3.4/24" } }`)
+		rawExec.ExecPluginCall.Returns.ResultBytes = []byte(`{ "ip": [ { "version": "4", "address": "1.2.3.4/24" } ] }`)
 
 		versionDecoder = &fakes.VersionDecoder{}
 		versionDecoder.DecodeCall.Returns.PluginInfo = version.PluginSupports("0.42.0")
@@ -58,7 +58,8 @@ var _ = Describe("Executing a plugin, unit tests", func() {
 		It("unmarshals the result bytes into the Result type", func() {
 			result, err := pluginExec.WithResult(pluginPath, netconf, cniargs)
 			Expect(err).NotTo(HaveOccurred())
-			Expect(result.IP4.IP.IP.String()).To(Equal("1.2.3.4"))
+			Expect(len(result.IP)).To(Equal(1))
+			Expect(result.IP[0].Address.IP.String()).To(Equal("1.2.3.4"))
 		})
 
 		It("passes its arguments through to the rawExec", func() {
