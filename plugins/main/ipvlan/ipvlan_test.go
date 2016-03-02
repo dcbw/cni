@@ -16,6 +16,7 @@ package main
 
 import (
 	"fmt"
+	"net"
 
 	"github.com/containernetworking/cni/pkg/ns"
 	"github.com/containernetworking/cni/pkg/skel"
@@ -79,10 +80,11 @@ var _ = Describe("ipvlan Operations", func() {
 		err = originalNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 
-			err := createIpvlan(conf, "foobar0", targetNs)
+			_, err := createIpvlan(conf, "foobar0", targetNs)
 			Expect(err).NotTo(HaveOccurred())
 			return nil
 		})
+
 		Expect(err).NotTo(HaveOccurred())
 
 		// Make sure ipvlan link exists in the target namespace
@@ -121,13 +123,16 @@ var _ = Describe("ipvlan Operations", func() {
 			StdinData:   []byte(conf),
 		}
 
+		var result *types.Result
 		err = originalNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 
-			_, err := testutils.CmdAddWithResult(targetNs.Path(), IFNAME, func() error {
+			result, err = testutils.CmdAddWithResult(targetNs.Path(), IFNAME, func() error {
 				return cmdAdd(args)
 			})
 			Expect(err).NotTo(HaveOccurred())
+			Expect(len(result.Interfaces)).To(Equal(1))
+			Expect(result.Interfaces[0].Name).To(Equal(IFNAME))
 			return nil
 		})
 		Expect(err).NotTo(HaveOccurred())
@@ -139,6 +144,10 @@ var _ = Describe("ipvlan Operations", func() {
 			link, err := netlink.LinkByName(IFNAME)
 			Expect(err).NotTo(HaveOccurred())
 			Expect(link.Attrs().Name).To(Equal(IFNAME))
+
+			hwaddr, err := net.ParseMAC(result.Interfaces[0].Mac)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(link.Attrs().HardwareAddr).To(Equal(hwaddr))
 			return nil
 		})
 		Expect(err).NotTo(HaveOccurred())

@@ -146,13 +146,16 @@ var _ = Describe("bridge Operations", func() {
 			StdinData:   []byte(conf),
 		}
 
+		var result *types.Result
 		err = originalNS.Do(func(ns.NetNS) error {
 			defer GinkgoRecover()
 
-			_, err := testutils.CmdAddWithResult(targetNs.Path(), IFNAME, func() error {
+			result, err = testutils.CmdAddWithResult(targetNs.Path(), IFNAME, func() error {
 				return cmdAdd(args)
 			})
 			Expect(err).NotTo(HaveOccurred())
+			Expect(len(result.Interfaces)).To(Equal(2))
+			Expect(result.Interfaces[1].Name).To(Equal(IFNAME))
 
 			// Make sure bridge link exists
 			link, err := netlink.LinkByName(BRNAME)
@@ -178,13 +181,10 @@ var _ = Describe("bridge Operations", func() {
 			links, err := netlink.LinkList()
 			Expect(err).NotTo(HaveOccurred())
 			Expect(len(links)).To(Equal(3)) // Bridge, veth, and loopback
-			for _, l := range links {
-				if l.Attrs().Name != BRNAME && l.Attrs().Name != "lo" {
-					_, isVeth := l.(*netlink.Veth)
-					Expect(isVeth).To(Equal(true))
-				}
-			}
+			link, err = netlink.LinkByName(result.Interfaces[0].Name)
 			Expect(err).NotTo(HaveOccurred())
+			_, isVeth := link.(*netlink.Veth)
+			Expect(isVeth).To(Equal(true))
 			return nil
 		})
 		Expect(err).NotTo(HaveOccurred())
@@ -203,6 +203,7 @@ var _ = Describe("bridge Operations", func() {
 
 			var defaultRouteFound bool
 			for _, route := range routes {
+				GinkgoT().Logf("#### found route %+v", route)
 				defaultRouteFound = (route.Dst == nil && route.Src == nil && route.Gw.Equal(gwaddr))
 				if defaultRouteFound {
 					break
@@ -235,5 +236,14 @@ var _ = Describe("bridge Operations", func() {
 			return nil
 		})
 		Expect(err).NotTo(HaveOccurred())
+
+		err = originalNS.Do(func(ns.NetNS) error {
+			defer GinkgoRecover()
+
+			link, err := netlink.LinkByName(result.Interfaces[0].Name)
+			Expect(err).To(HaveOccurred())
+			Expect(link).To(BeNil())
+			return nil
+		})
 	})
 })

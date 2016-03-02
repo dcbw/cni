@@ -73,22 +73,24 @@ func modeFromString(s string) (netlink.MacvlanMode, error) {
 	}
 }
 
-func createMacvlan(conf *NetConf, ifName string, netns ns.NetNS) error {
+func createMacvlan(conf *NetConf, ifName string, netns ns.NetNS) (*types.Interface, error) {
+	macvlan := &types.Interface{}
+
 	mode, err := modeFromString(conf.Mode)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	m, err := netlink.LinkByName(conf.Master)
 	if err != nil {
-		return fmt.Errorf("failed to lookup master %q: %v", conf.Master, err)
+		return nil, fmt.Errorf("failed to lookup master %q: %v", conf.Master, err)
 	}
 
 	// due to kernel bug we have to create with tmpName or it might
 	// collide with the name on the host and error out
-	tmpName, err := ip.RandomVethName()
+	tmpName, err := ip.RandomIfaceName("macvl")
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	mv := &netlink.Macvlan{
@@ -102,10 +104,10 @@ func createMacvlan(conf *NetConf, ifName string, netns ns.NetNS) error {
 	}
 
 	if err := netlink.LinkAdd(mv); err != nil {
-		return fmt.Errorf("failed to create macvlan: %v", err)
+		return nil, fmt.Errorf("failed to create macvlan: %v", err)
 	}
 
-	return netns.Do(func(_ ns.NetNS) error {
+	err = netns.Do(func(_ ns.NetNS) error {
 		// TODO: duplicate following lines for ipv6 support, when it will be added in other places
 		ipv4SysctlValueName := fmt.Sprintf(IPv4InterfaceArpProxySysctlTemplate, tmpName)
 		if _, err := sysctl.Sysctl(ipv4SysctlValueName, "1"); err != nil {
@@ -114,13 +116,32 @@ func createMacvlan(conf *NetConf, ifName string, netns ns.NetNS) error {
 			return fmt.Errorf("failed to set proxy_arp on newly added interface %q: %v", tmpName, err)
 		}
 
-		err := renameLink(tmpName, ifName)
-		if err != nil {
-			_ = netlink.LinkDel(mv)
+		if ifName == "" {
+			ifName, err = ip.RandomIfaceName("eth")
+			if err != nil {
+				return err
+			}
+		}
+		if err := ip.RenameLink(tmpName, ifName); err != nil {
 			return fmt.Errorf("failed to rename macvlan to %q: %v", ifName, err)
 		}
+		macvlan.Name = ifName
+
+		// Re-fetch macvlan to get all properties/attributes
+		contMacvlan, err := netlink.LinkByName(ifName)
+		if err != nil {
+			return fmt.Errorf("failed to refetch macvlan %q: %v", ifName, err)
+		}
+		macvlan.Mac = contMacvlan.Attrs().HardwareAddr.String()
+		macvlan.Sandbox = netns.Path()
+
 		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	return macvlan, nil
 }
 
 func cmdAdd(args *skel.CmdArgs) error {
@@ -135,7 +156,8 @@ func cmdAdd(args *skel.CmdArgs) error {
 	}
 	defer netns.Close()
 
-	if err = createMacvlan(n, args.IfName, netns); err != nil {
+	macvlanInterface, err := createMacvlan(n, args.IfName, netns)
+	if err != nil {
 		return err
 	}
 
@@ -144,10 +166,14 @@ func cmdAdd(args *skel.CmdArgs) error {
 	if err != nil {
 		return err
 	}
-	if result.IP4 == nil {
-		return errors.New("IPAM plugin returned missing IPv4 config")
+	if len(result.IP) == 0 {
+		return errors.New("IPAM plugin returned missing IP config")
 	}
 
+	for _, ipc := range result.IP {
+		// All addresses apply to the container macvlan interface
+		ipc.Interface = 0
+	}
 	err = netns.Do(func(_ ns.NetNS) error {
 		return ipam.ConfigureIface(args.IfName, result)
 	})
@@ -156,6 +182,7 @@ func cmdAdd(args *skel.CmdArgs) error {
 	}
 
 	result.DNS = n.DNS
+	result.Interfaces = []*types.Interface{macvlanInterface}
 	return result.Print()
 }
 
@@ -177,15 +204,6 @@ func cmdDel(args *skel.CmdArgs) error {
 	return ns.WithNetNSPath(args.Netns, func(_ ns.NetNS) error {
 		return ip.DelLinkByName(args.IfName)
 	})
-}
-
-func renameLink(curName, newName string) error {
-	link, err := netlink.LinkByName(curName)
-	if err != nil {
-		return err
-	}
-
-	return netlink.LinkSetName(link, newName)
 }
 
 func main() {

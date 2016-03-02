@@ -129,40 +129,44 @@ func ensureBridge(brName string, mtu int) (*netlink.Bridge, error) {
 	return br, nil
 }
 
-func setupVeth(netns ns.NetNS, br *netlink.Bridge, ifName string, mtu int, hairpinMode bool) error {
-	var hostVethName string
+func setupVeth(netns ns.NetNS, br *netlink.Bridge, ifName string, mtu int, hairpinMode bool) (*types.Interface, *types.Interface, error) {
+	contIface := &types.Interface{}
+	hostIface := &types.Interface{}
 
 	err := netns.Do(func(hostNS ns.NetNS) error {
 		// create the veth pair in the container and move host end into host netns
-		hostVeth, _, err := ip.SetupVeth(ifName, mtu, hostNS)
+		hostVeth, containerVeth, err := ip.SetupVeth(ifName, "eth", mtu, hostNS)
 		if err != nil {
 			return err
 		}
-
-		hostVethName = hostVeth.Attrs().Name
+		contIface.Name = containerVeth.Attrs().Name
+		contIface.Mac = containerVeth.Attrs().HardwareAddr.String()
+		contIface.Sandbox = netns.Path()
+		hostIface.Name = hostVeth.Attrs().Name
 		return nil
 	})
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 
 	// need to lookup hostVeth again as its index has changed during ns move
-	hostVeth, err := netlink.LinkByName(hostVethName)
+	hostVeth, err := netlink.LinkByName(hostIface.Name)
 	if err != nil {
-		return fmt.Errorf("failed to lookup %q: %v", hostVethName, err)
+		return nil, nil, fmt.Errorf("failed to lookup %q: %v", hostIface.Name, err)
 	}
+	hostIface.Mac = hostVeth.Attrs().HardwareAddr.String()
 
 	// connect host veth end to the bridge
-	if err = netlink.LinkSetMaster(hostVeth, br); err != nil {
-		return fmt.Errorf("failed to connect %q to bridge %v: %v", hostVethName, br.Attrs().Name, err)
+	if err := netlink.LinkSetMaster(hostVeth, br); err != nil {
+		return nil, nil, fmt.Errorf("failed to connect %q to bridge %v: %v", hostVeth.Attrs().Name, br.Attrs().Name, err)
 	}
 
 	// set hairpin mode
 	if err = netlink.LinkSetHairpin(hostVeth, hairpinMode); err != nil {
-		return fmt.Errorf("failed to setup hairpin mode for %v: %v", hostVethName, err)
+		return nil, nil, fmt.Errorf("failed to setup hairpin mode for %v: %v", hostVeth.Attrs().Name, err)
 	}
 
-	return nil
+	return hostIface, contIface, nil
 }
 
 func calcGatewayIP(ipn *net.IPNet) net.IP {
@@ -201,7 +205,8 @@ func cmdAdd(args *skel.CmdArgs) error {
 	}
 	defer netns.Close()
 
-	if err = setupVeth(netns, br, args.IfName, n.MTU, n.HairpinMode); err != nil {
+	hostInterface, containerInterface, err := setupVeth(netns, br, args.IfName, n.MTU, n.HairpinMode)
+	if err != nil {
 		return err
 	}
 
@@ -211,38 +216,48 @@ func cmdAdd(args *skel.CmdArgs) error {
 		return err
 	}
 
-	// TODO: make this optional when IPv6 is supported
-	if result.IP4 == nil {
-		return errors.New("IPAM plugin returned missing IPv4 config")
+	if len(result.IP) == 0 {
+		return errors.New("IPAM plugin returned missing IP config")
 	}
+	result.Interfaces = []*types.Interface{hostInterface, containerInterface}
 
-	if result.IP4.Gateway == nil && n.IsGW {
-		result.IP4.Gateway = calcGatewayIP(&result.IP4.IP)
+	for _, ipc := range result.IP {
+		// All IPs currently refer to the container interface
+		ipc.Interface = 1
+		if ipc.Gateway == nil && n.IsGW {
+			ipc.Gateway = calcGatewayIP(&ipc.Address)
+		}
 	}
 
 	if err := netns.Do(func(_ ns.NetNS) error {
 		// set the default gateway if requested
 		if n.IsDefaultGW {
-			_, defaultNet, err := net.ParseCIDR("0.0.0.0/0")
-			if err != nil {
-				return err
-			}
+			for _, ipc := range result.IP {
+				defaultNet := &net.IPNet{
+					IP:   net.IPv6zero,
+					Mask: net.IPMask(net.IPv6zero),
+				}
+				if ipc.Address.IP.To4() != nil {
+					defaultNet.IP = net.IPv4zero
+					defaultNet.Mask = net.IPMask(net.IPv4zero)
+				}
 
-			for _, route := range result.IP4.Routes {
-				if defaultNet.String() == route.Dst.String() {
-					if route.GW != nil && !route.GW.Equal(result.IP4.Gateway) {
-						return fmt.Errorf(
-							"isDefaultGateway ineffective because IPAM sets default route via %q",
-							route.GW,
-						)
+				for _, route := range ipc.Routes {
+					if defaultNet.String() == route.Dst.String() {
+						if route.GW != nil && !route.GW.Equal(ipc.Gateway) {
+							return fmt.Errorf(
+								"isDefaultGateway ineffective because IPAM sets default route via %q",
+								route.GW,
+							)
+						}
 					}
 				}
-			}
 
-			result.IP4.Routes = append(
-				result.IP4.Routes,
-				types.Route{Dst: *defaultNet, GW: result.IP4.Gateway},
-			)
+				ipc.Routes = append(
+					ipc.Routes,
+					types.Route{Dst: *defaultNet, GW: ipc.Gateway},
+				)
+			}
 
 			// TODO: IPV6
 		}
@@ -253,13 +268,15 @@ func cmdAdd(args *skel.CmdArgs) error {
 	}
 
 	if n.IsGW {
-		gwn := &net.IPNet{
-			IP:   result.IP4.Gateway,
-			Mask: result.IP4.IP.Mask,
-		}
+		for _, ipc := range result.IP {
+			gwn := &net.IPNet{
+				IP:   ipc.Gateway,
+				Mask: ipc.Address.Mask,
+			}
 
-		if err = ensureBridgeAddr(br, gwn); err != nil {
-			return err
+			if err = ensureBridgeAddr(br, gwn); err != nil {
+				return err
+			}
 		}
 
 		if err := ip.EnableIP4Forward(); err != nil {
@@ -270,8 +287,10 @@ func cmdAdd(args *skel.CmdArgs) error {
 	if n.IPMasq {
 		chain := utils.FormatChainName(n.Name, args.ContainerID)
 		comment := utils.FormatComment(n.Name, args.ContainerID)
-		if err = ip.SetupIPMasq(ip.Network(&result.IP4.IP), chain, comment); err != nil {
-			return err
+		for _, ipc := range result.IP {
+			if err = ip.SetupIPMasq(ip.Network(&ipc.Address), chain, comment); err != nil {
+				return err
+			}
 		}
 	}
 

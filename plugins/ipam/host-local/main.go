@@ -48,7 +48,7 @@ func cmdAdd(args *skel.CmdArgs) error {
 	}
 
 	r := &types.Result{
-		IP4: ipConf,
+		IP: []*types.IPConfig{ipConf},
 	}
 	return r.Print()
 }

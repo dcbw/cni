@@ -50,7 +50,8 @@ The operations that the CNI plugin needs to support are:
     - **Extra arguments**. This provides an alternative mechanism to allow simple configuration of CNI plugins on a per-container basis.
     - **Name of the interface inside the container**. This is the name that should be assigned to the interface created inside the container (network namespace); consequently it must comply with the standard Linux restrictions on interface names.
   - Result:
-    - **IPs assigned to the interface**. This is either an IPv4 address, an IPv6 address, or both.
+    - **Interfaces list**. Depending on the plugin, this can include the sandbox (eg, container or hypervisor) interface name and/or the host interface name, the hardware addresses of each interface, and details about the sandbox (if any) the interface is in.
+    - **IPs assigned to each interface**. The IPv4 and/or IPv6 addresses, gateways, and routes assigned to sandbox and/or host interfaces.
     - **DNS information**. Dictionary that includes DNS information for nameservers, domain, search domains and options.
 
 - Delete container from network
@@ -68,7 +69,7 @@ It will then look for this executable in a list of predefined directories. Once 
 - `CNI_COMMAND`: indicates the desired operation; either `ADD` or `DEL`
 - `CNI_CONTAINERID`: Container ID
 - `CNI_NETNS`: Path to network namespace file
-- `CNI_IFNAME`: Interface name to set up
+- `CNI_IFNAME`: Interface name to set up; plugin must honor this interface name or return an error
 - `CNI_ARGS`: Extra arguments passed in by the user at invocation time. Alphanumeric key-value pairs separated by semicolons; for example, "FOO=BAR;ABC=123"
 - `CNI_PATH`: Colon-separated list of paths to search for CNI plugin executables
 
@@ -77,21 +78,34 @@ Network configuration in JSON format is streamed to the plugin through stdin. Th
 
 ### Result
 
-Success is indicated by a return code of zero and the following JSON printed to stdout in the case of the ADD command. This should be the same output as was returned by the IPAM plugin (see [IP Allocation](#ip-allocation) for details).
+Success is indicated by a return code of zero and the following JSON printed to stdout in the case of the ADD command. The `ip` and `dns` items should be the same output as was returned by the IPAM plugin (see [IP Allocation](#ip-allocation) for details) except that the plugin should fill in the `interface` indexes appropriately, which are missing from IPAM plugin output since IPAM plugins should be unaware of interfaces.
 
 ```
 {
   "cniVersion": "0.1.0",
-  "ip4": {
-    "ip": <ipv4-and-subnet-in-CIDR>,
-    "gateway": <ipv4-of-the-gateway>,  (optional)
-    "routes": <list-of-ipv4-routes>    (optional)
-  },
-  "ip6": {
-    "ip": <ipv6-and-subnet-in-CIDR>,
-    "gateway": <ipv6-of-the-gateway>,  (optional)
-    "routes": <list-of-ipv6-routes>    (optional)
-  },
+  "interfaces": [
+      {
+          "name": "<name>",
+          "mac": "<MAC address>",  (required if L2 addresses are meaningful)
+          "sandbox": "<netns path or hypervisor identifier>"   (required for container/hypervisor interfaces)
+      }
+  ],
+  "ip": [
+      {
+          "version": "<4-or-6>",
+          "address": "<ip-and-prefix-in-CIDR>",
+          "gateway": "<ip-address-of-the-gateway>",  (optional)
+          "interface": "<numeric index into 'interfaces' list which this IP config applies to>", (optional for IPAM plugins)
+          "routes": [   (optional)
+              {
+                  "dst": "<ip-and-prefix-in-cidr>",
+                  "gw": "<ip-of-next-hop (optional)>"
+              },
+              ...
+          ]
+      },
+      ...
+  ],
   "dns": {
     "nameservers": <list-of-nameservers>           (optional)
     "domain": <name-of-local-domain>               (optional)
@@ -102,7 +116,12 @@ Success is indicated by a return code of zero and the following JSON printed to 
 ```
 
 `cniVersion` specifies a [Semantic Version 2.0](http://semver.org) of CNI specification used by the plugin.
-`dns` field contains a dictionary consisting of common DNS information that this network is aware of.
+`interfaces` describes specific network interfaces the plugin created.
+If L2 addresses are not meaningful for the plugin then an interface element's "mac" key may be omitted.
+The `sandbox` key must be provided for interfaces created or moved into a sandbox like a network namespace or a hypervisor/VM.  For container/namespace-based environments the `sandbox` key should be the full filesystem path to the network namespace of that sandbox. Hypervisor/VM-based plugins should return an ID unique to the virtualized sandbox the interface was created in.
+`ips` contains a list of IP address information for interfaces in the `interfaces` list. At least the `version` and `ip` items are required but all items should be provided if they are known to the plugin.
+If the `CNI_IFNAME` variable is passed to the plugin, it must honor that name or return an error if it cannot.
+`dns` contains a dictionary consisting of common DNS information that this network is aware of.
 The result is returned in the same format as specified in the [configuration](#network-configuration).
 The specification does not declare how this information must be processed by CNI consumers.
 Examples include generating an `/etc/resolv.conf` file to be injected into the container filesystem or running a DNS forwarder on the host.
@@ -217,16 +236,21 @@ Success is indicated by a zero return code and the following JSON being printed 
 ```
 {
   "cniVersion": "0.1.0",
-  "ip4": {
-    "ip": <ipv4-and-subnet-in-CIDR>,
-    "gateway": <ipv4-of-the-gateway>,  (optional)
-    "routes": <list-of-ipv4-routes>    (optional)
-  },
-  "ip6": {
-    "ip": <ipv6-and-subnet-in-CIDR>,
-    "gateway": <ipv6-of-the-gateway>,  (optional)
-    "routes": <list-of-ipv6-routes>    (optional)
-  },
+  "ips": [
+      {
+          "version": "<4-or-6>",
+          "ip": "<ip-and-prefix-in-CIDR>",
+          "gateway": "<ip-address-of-the-gateway>",  (optional)
+          "routes": [   (optional)
+              {
+                  "dst": "<ip-and-prefix-in-cidr>",
+                  "gw": "<ip-of-next-hop (optional)>"
+              },
+              ...
+          ]
+      },
+      ...
+  ],
   "dns": {
     "nameservers": <list-of-nameservers>           (optional)
     "domain": <name-of-local-domain>               (optional)
@@ -237,11 +261,14 @@ Success is indicated by a zero return code and the following JSON being printed 
 ```
 
 `cniVersion` specifies a [Semantic Version 2.0](http://semver.org) of CNI specification used by the plugin.
+`ips` contains a list of IP address information determined by the plugin. At least the `version` and `ip` items are required but all items should be provided if they are known to the plugin.
+`version` is either "4" or "6" and corresponds to the IP version of the addresses and routes in the entry. All addresses and routes provided must match the given `version`.
+`ip` is an IP address in CIDR notation (eg "192.168.1.3/24").
 `gateway` is the default gateway for this subnet, if one exists.
 It does not instruct the CNI plugin to add any routes with this gateway: routes to add are specified separately via the `routes` field.
 An example use of this value is for the CNI plugin to add this IP address to the linux-bridge to make it a gateway.
 
-Each route entry is a dictionary with the following fields:
+Each `routes` entry is a dictionary with the following fields:
 - `dst` (string): Destination subnet specified in CIDR notation.
 - `gw` (string): IP of the gateway. If omitted, a default gateway is assumed (as determined by the CNI plugin).
 

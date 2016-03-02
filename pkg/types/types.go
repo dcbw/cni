@@ -67,34 +67,36 @@ type NetConf struct {
 
 // Result is what gets returned from the plugin (via stdout) to the caller
 type Result struct {
-	IP4 *IPConfig `json:"ip4,omitempty"`
-	IP6 *IPConfig `json:"ip6,omitempty"`
-	DNS DNS       `json:"dns,omitempty"`
+	Interfaces []*Interface `json:"interfaces,omitempty"`
+	IP         []*IPConfig  `json:"ip,omitempty"`
+	DNS        DNS          `json:"dns,omitempty"`
 }
 
 func (r *Result) Print() error {
 	return prettyPrint(r)
 }
 
-// String returns a formatted string in the form of "[IP4: $1,][ IP6: $2,] DNS: $3" where
-// $1 represents the receiver's IPv4, $2 represents the receiver's IPv6 and $3 the
+// String returns a formatted string in the form of "[Interfaces: $1,][ IPs: $2,] DNS: $3" where
+// $1 represents the receiver's Interfaces, $2 represents the receiver's IP addresses and $3 the
 // receiver's DNS. If $1 or $2 are nil, they won't be present in the returned string.
 func (r *Result) String() string {
 	var str string
-	if r.IP4 != nil {
-		str = fmt.Sprintf("IP4:%+v, ", *r.IP4)
+	if len(r.Interfaces) > 0 {
+		str += fmt.Sprintf("Interfaces:%+v, ", r.Interfaces)
 	}
-	if r.IP6 != nil {
-		str += fmt.Sprintf("IP6:%+v, ", *r.IP6)
+	if len(r.IP) > 0 {
+		str += fmt.Sprintf("IPs:%+v, ", r.IP)
 	}
 	return fmt.Sprintf("%sDNS:%+v", str, r.DNS)
 }
 
 // IPConfig contains values necessary to configure an interface
 type IPConfig struct {
-	IP      net.IPNet
-	Gateway net.IP
-	Routes  []Route
+	Version   string
+	Interface uint
+	Address   net.IPNet
+	Gateway   net.IP
+	Routes    []Route
 }
 
 // DNS contains values interesting for DNS resolvers
@@ -103,6 +105,13 @@ type DNS struct {
 	Domain      string   `json:"domain,omitempty"`
 	Search      []string `json:"search,omitempty"`
 	Options     []string `json:"options,omitempty"`
+}
+
+// InterfaceConfig contains values about the created interfaces
+type Interface struct {
+	Name    string `json:"name"`
+	Mac     string `json:"mac,omitempty"`
+	Sandbox string `json:"sandbox,omitempty"`
 }
 
 type Route struct {
@@ -129,9 +138,11 @@ func (e *Error) Print() error {
 
 // JSON (un)marshallable types
 type ipConfig struct {
-	IP      IPNet   `json:"ip"`
-	Gateway net.IP  `json:"gateway,omitempty"`
-	Routes  []Route `json:"routes,omitempty"`
+	Version   string  `json:"version"`
+	Interface uint    `json:"interface,omitempty"`
+	Address   IPNet   `json:"address"`
+	Gateway   net.IP  `json:"gateway,omitempty"`
+	Routes    []Route `json:"routes,omitempty"`
 }
 
 type route struct {
@@ -141,9 +152,11 @@ type route struct {
 
 func (c *IPConfig) MarshalJSON() ([]byte, error) {
 	ipc := ipConfig{
-		IP:      IPNet(c.IP),
-		Gateway: c.Gateway,
-		Routes:  c.Routes,
+		Version:   c.Version,
+		Interface: c.Interface,
+		Address:   IPNet(c.Address),
+		Gateway:   c.Gateway,
+		Routes:    c.Routes,
 	}
 
 	return json.Marshal(ipc)
@@ -155,7 +168,9 @@ func (c *IPConfig) UnmarshalJSON(data []byte) error {
 		return err
 	}
 
-	c.IP = net.IPNet(ipc.IP)
+	c.Version = ipc.Version
+	c.Interface = ipc.Interface
+	c.Address = net.IPNet(ipc.Address)
 	c.Gateway = ipc.Gateway
 	c.Routes = ipc.Routes
 	return nil

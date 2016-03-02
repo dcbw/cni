@@ -100,7 +100,7 @@ var _ = Describe("host-local ip allocator", func() {
 			for _, tc := range testCases {
 				res, err := tc.run()
 				Expect(err).ToNot(HaveOccurred())
-				Expect(res.IP.IP.String()).To(Equal(tc.expectResult))
+				Expect(res.Address.IP.String()).To(Equal(tc.expectResult))
 			}
 		})
 	})
