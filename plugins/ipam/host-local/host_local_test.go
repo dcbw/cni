@@ -24,6 +24,7 @@ import (
 	"github.com/containernetworking/cni/pkg/skel"
 	"github.com/containernetworking/cni/pkg/testutils"
 	"github.com/containernetworking/cni/pkg/types"
+	"github.com/containernetworking/cni/pkg/types/current"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
@@ -58,9 +59,12 @@ var _ = Describe("host-local Operations", func() {
 		}
 
 		// Allocate the IP
-		result, _, err := testutils.CmdAddWithResult(nspath, ifname, []byte(conf), func() error {
+		r, _, err := testutils.CmdAddWithResult(nspath, ifname, []byte(conf), func() error {
 			return cmdAdd(args)
 		})
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := current.GetResult(r)
 		Expect(err).NotTo(HaveOccurred())
 
 		expectedAddress, err := types.ParseCIDR("10.1.2.2/24")

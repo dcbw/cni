@@ -44,7 +44,7 @@ type CNIConfig struct {
 }
 
 // AddNetwork executes the plugin with the ADD command
-func (c *CNIConfig) AddNetwork(net *NetworkConfig, rt *RuntimeConf) (*types.Result, error) {
+func (c *CNIConfig) AddNetwork(net *NetworkConfig, rt *RuntimeConf) (types.Result, error) {
 	pluginPath, err := invoke.FindInPath(net.Network.Type, c.Path)
 	if err != nil {
 		return nil, err

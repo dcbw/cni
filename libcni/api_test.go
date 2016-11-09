@@ -22,6 +22,7 @@ import (
 	"github.com/containernetworking/cni/libcni"
 	"github.com/containernetworking/cni/pkg/skel"
 	"github.com/containernetworking/cni/pkg/types"
+	"github.com/containernetworking/cni/pkg/types/current"
 	noop_debug "github.com/containernetworking/cni/plugins/test/noop/debug"
 
 	. "github.com/onsi/ginkgo"
@@ -80,11 +81,14 @@ var _ = Describe("Invoking the plugin", func() {
 
 	Describe("AddNetwork", func() {
 		It("executes the plugin with command ADD", func() {
-			result, err := cniConfig.AddNetwork(netConfig, runtimeConfig)
+			r, err := cniConfig.AddNetwork(netConfig, runtimeConfig)
 			Expect(err).NotTo(HaveOccurred())
 
-			Expect(result).To(Equal(&types.Result{
-				IP4: &types.IPConfig{
+			result, err := current.GetResult(r)
+			Expect(err).NotTo(HaveOccurred())
+
+			Expect(result).To(Equal(&current.Result{
+				IP4: &current.IPConfig{
 					IP: net.IPNet{
 						IP:   net.ParseIP("10.1.2.3"),
 						Mask: net.IPv4Mask(255, 255, 255, 0),

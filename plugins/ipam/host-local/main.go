@@ -18,7 +18,7 @@ import (
 	"github.com/containernetworking/cni/plugins/ipam/host-local/backend/disk"
 
 	"github.com/containernetworking/cni/pkg/skel"
-	"github.com/containernetworking/cni/pkg/types"
+	"github.com/containernetworking/cni/pkg/types/current"
 	"github.com/containernetworking/cni/pkg/version"
 )
 
@@ -48,7 +48,7 @@ func cmdAdd(args *skel.CmdArgs) error {
 		return err
 	}
 
-	r := &types.Result{
+	r := &current.Result{
 		IP4: ipConf,
 	}
 	return r.Print()
