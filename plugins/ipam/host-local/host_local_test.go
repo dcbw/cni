@@ -65,10 +65,10 @@ var _ = Describe("host-local Operations", func() {
 
 		expectedAddress, err := types.ParseCIDR("10.1.2.2/24")
 		Expect(err).NotTo(HaveOccurred())
+		Expect(len(result.IP)).To(Equal(1))
 		expectedAddress.IP = expectedAddress.IP.To16()
-		Expect(result.IP4.IP).To(Equal(*expectedAddress))
-
-		Expect(result.IP4.Gateway).To(Equal(net.ParseIP("10.1.2.1")))
+		Expect(result.IP[0].Address).To(Equal(*expectedAddress))
+		Expect(result.IP[0].Gateway).To(Equal(net.ParseIP("10.1.2.1")))
 
 		ipFilePath := filepath.Join(tmpDir, "mynet", "10.1.2.2")
 		contents, err := ioutil.ReadFile(ipFilePath)

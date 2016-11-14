@@ -55,6 +55,39 @@ func (r *Result) String() string {
 	return fmt.Sprintf("%sDNS:%+v", str, r.DNS)
 }
 
+// Convert this old version result to the current CNI version result
+func (r *Result) Convert() (*types.Result, error) {
+	newResult := &types.Result{
+		DNS: r.DNS,
+	}
+
+	if r.IP4 != nil && r.IP4.IP.IP.To4() != nil {
+		newResult.IP = append(newResult.IP, &types.IPConfig{
+			Version:   "4",
+			Interface: -1,
+			Address:   r.IP4.IP,
+			Gateway:   r.IP4.Gateway,
+			Routes:    r.IP4.Routes,
+		})
+	}
+
+	if r.IP6 != nil && r.IP6.IP.IP.To16() != nil {
+		newResult.IP = append(newResult.IP, &types.IPConfig{
+			Version:   "6",
+			Interface: -1,
+			Address:   r.IP6.IP,
+			Gateway:   r.IP6.Gateway,
+			Routes:    r.IP6.Routes,
+		})
+	}
+
+	if len(newResult.IP) == 0 {
+		return nil, fmt.Errorf("cannot convert: no valid IP addresses")
+	}
+
+	return newResult, nil
+}
+
 // IPConfig contains values necessary to configure an interface
 type IPConfig struct {
 	IP      net.IPNet

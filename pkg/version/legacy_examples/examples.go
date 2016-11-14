@@ -23,7 +23,6 @@ import (
 	"sync"
 
 	"github.com/containernetworking/cni/pkg/types"
-	"github.com/containernetworking/cni/pkg/version/010"
 	"github.com/containernetworking/cni/pkg/version/testhelpers"
 )
 
@@ -115,20 +114,24 @@ func main() { skel.PluginMain(c, c) }
 //
 // As we change the CNI spec, the Result type and this value may change.
 // The text of the example plugins should not.
-var ExpectedResult = &types010.Result{
-	IP4: &types010.IPConfig{
-		IP: net.IPNet{
-			IP:   net.ParseIP("10.1.2.3"),
-			Mask: net.CIDRMask(24, 32),
-		},
-		Gateway: net.ParseIP("10.1.2.1"),
-		Routes: []types.Route{
-			types.Route{
-				Dst: net.IPNet{
-					IP:   net.ParseIP("0.0.0.0"),
-					Mask: net.CIDRMask(0, 32),
+var ExpectedResult = &types.Result{
+	IP: []*types.IPConfig{
+		{
+			Version: "4",
+			Interface: -1,
+			Address: net.IPNet{
+				IP:   net.ParseIP("10.1.2.3"),
+				Mask: net.CIDRMask(24, 32),
+			},
+			Gateway: net.ParseIP("10.1.2.1"),
+			Routes: []types.Route{
+				types.Route{
+					Dst: net.IPNet{
+						IP:   net.ParseIP("0.0.0.0"),
+						Mask: net.CIDRMask(0, 32),
+					},
+					GW: net.ParseIP("10.1.0.1"),
 				},
-				GW: net.ParseIP("10.1.0.1"),
 			},
 		},
 	},

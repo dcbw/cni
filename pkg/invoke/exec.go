@@ -57,6 +57,9 @@ func (e *PluginExec) WithResult(pluginPath string, netconf []byte, args CNIArgs)
 
 	res := &types.Result{}
 	err = json.Unmarshal(stdoutBytes, res)
+	if err != nil {
+		res, err = version.ConvertResult(stdoutBytes)
+	}
 	return res, err
 }
 
