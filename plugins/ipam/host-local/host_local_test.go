@@ -58,7 +58,7 @@ var _ = Describe("host-local Operations", func() {
 		}
 
 		// Allocate the IP
-		result, err := testutils.CmdAddWithResult(nspath, ifname, func() error {
+		result, _, err := testutils.CmdAddWithResult(nspath, ifname, []byte(conf), func() error {
 			return cmdAdd(args)
 		})
 		Expect(err).NotTo(HaveOccurred())
