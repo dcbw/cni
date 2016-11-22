@@ -18,16 +18,17 @@ import (
 	"github.com/containernetworking/cni/plugins/ipam/host-local/backend/disk"
 
 	"github.com/containernetworking/cni/pkg/skel"
+	"github.com/containernetworking/cni/pkg/types"
 	"github.com/containernetworking/cni/pkg/types/current"
 	"github.com/containernetworking/cni/pkg/version"
 )
 
 func main() {
-	skel.PluginMain(cmdAdd, cmdDel, version.Legacy)
+	skel.PluginMain(cmdAdd, cmdDel, version.All)
 }
 
 func cmdAdd(args *skel.CmdArgs) error {
-	ipamConf, err := LoadIPAMConfig(args.StdinData, args.Args)
+	ipamConf, confVersion, err := LoadIPAMConfig(args.StdinData, args.Args)
 	if err != nil {
 		return err
 	}
@@ -48,14 +49,15 @@ func cmdAdd(args *skel.CmdArgs) error {
 		return err
 	}
 
-	r := &current.Result{
-		IP4: ipConf,
+	result := &current.Result{
+		IP: []*current.IPConfig{ipConf},
 	}
-	return r.Print()
+
+	return types.PrintResult(result, confVersion)
 }
 
 func cmdDel(args *skel.CmdArgs) error {
-	ipamConf, err := LoadIPAMConfig(args.StdinData, args.Args)
+	ipamConf, _, err := LoadIPAMConfig(args.StdinData, args.Args)
 	if err != nil {
 		return err
 	}

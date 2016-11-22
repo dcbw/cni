@@ -23,7 +23,7 @@ import (
 	"sync"
 
 	"github.com/containernetworking/cni/pkg/types"
-	"github.com/containernetworking/cni/pkg/types/current"
+	"github.com/containernetworking/cni/pkg/types/020"
 	"github.com/containernetworking/cni/pkg/version/testhelpers"
 )
 
@@ -117,18 +117,22 @@ func main() { skel.PluginMain(c, c) }
 // The text of the example plugins should not.
 var ExpectedResult = &current.Result{
 	IP4: &current.IPConfig{
-		IP: net.IPNet{
-			IP:   net.ParseIP("10.1.2.3"),
-			Mask: net.CIDRMask(24, 32),
-		},
-		Gateway: net.ParseIP("10.1.2.1"),
-		Routes: []types.Route{
-			types.Route{
-				Dst: net.IPNet{
-					IP:   net.ParseIP("0.0.0.0"),
-					Mask: net.CIDRMask(0, 32),
+		{
+			Version: "4",
+			Interface: -1,
+			Address: net.IPNet{
+				IP:   net.ParseIP("10.1.2.3"),
+				Mask: net.CIDRMask(24, 32),
+			},
+			Gateway: net.ParseIP("10.1.2.1"),
+			Routes: []types.Route{
+				types.Route{
+					Dst: net.IPNet{
+						IP:   net.ParseIP("0.0.0.0"),
+						Mask: net.CIDRMask(0, 32),
+					},
+					GW: net.ParseIP("10.1.0.1"),
 				},
-				GW: net.ParseIP("10.1.0.1"),
 			},
 		},
 	},

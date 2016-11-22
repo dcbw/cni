@@ -49,7 +49,7 @@ var _ = Describe("Invoking the plugin", func() {
 		debugFilePath = debugFile.Name()
 
 		debug = &noop_debug.Debug{
-			ReportResult: `{ "ip4": { "ip": "10.1.2.3/24" }, "dns": {} }`,
+			ReportResult: `{ "ip": [{ "version": "4", "address": "10.1.2.3/24" }], "dns": {} }`,
 		}
 		Expect(debug.WriteDebug(debugFilePath)).To(Succeed())
 
@@ -88,10 +88,13 @@ var _ = Describe("Invoking the plugin", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			Expect(result).To(Equal(&current.Result{
-				IP4: &current.IPConfig{
-					IP: net.IPNet{
-						IP:   net.ParseIP("10.1.2.3"),
-						Mask: net.IPv4Mask(255, 255, 255, 0),
+				IP: []*current.IPConfig{
+					{
+						Version: "4",
+						Address: net.IPNet{
+							IP:   net.ParseIP("10.1.2.3"),
+							Mask: net.IPv4Mask(255, 255, 255, 0),
+						},
 					},
 				},
 			}))

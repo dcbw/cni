@@ -26,49 +26,138 @@ import (
 	. "github.com/onsi/gomega"
 )
 
-var _ = Describe("Ensures compatibility with the 0.1.0 spec", func() {
-	It("correctly encodes a 0.1.0 Result", func() {
-		ipv4, err := types.ParseCIDR("1.2.3.30/24")
-		Expect(err).NotTo(HaveOccurred())
-		Expect(ipv4).NotTo(BeNil())
+func testResult() *current.Result {
+	ipv4, err := types.ParseCIDR("1.2.3.30/24")
+	Expect(err).NotTo(HaveOccurred())
+	Expect(ipv4).NotTo(BeNil())
 
-		routegwv4, routev4, err := net.ParseCIDR("15.5.6.8/24")
-		Expect(err).NotTo(HaveOccurred())
-		Expect(routev4).NotTo(BeNil())
-		Expect(routegwv4).NotTo(BeNil())
+	routegwv4, routev4, err := net.ParseCIDR("15.5.6.8/24")
+	Expect(err).NotTo(HaveOccurred())
+	Expect(routev4).NotTo(BeNil())
+	Expect(routegwv4).NotTo(BeNil())
 
-		ipv6, err := types.ParseCIDR("abcd:1234:ffff::cdde/64")
-		Expect(err).NotTo(HaveOccurred())
-		Expect(ipv6).NotTo(BeNil())
+	ipv6, err := types.ParseCIDR("abcd:1234:ffff::cdde/64")
+	Expect(err).NotTo(HaveOccurred())
+	Expect(ipv6).NotTo(BeNil())
 
-		routegwv6, routev6, err := net.ParseCIDR("1111:dddd::aaaa/80")
-		Expect(err).NotTo(HaveOccurred())
-		Expect(routev6).NotTo(BeNil())
-		Expect(routegwv6).NotTo(BeNil())
+	routegwv6, routev6, err := net.ParseCIDR("1111:dddd::aaaa/80")
+	Expect(err).NotTo(HaveOccurred())
+	Expect(routev6).NotTo(BeNil())
+	Expect(routegwv6).NotTo(BeNil())
 
-		// Set every field of the struct to ensure source compatibility
-		res := current.Result{
-			IP4: &current.IPConfig{
-				IP:      *ipv4,
+	// Set every field of the struct to ensure source compatibility
+	return &current.Result{
+		Interfaces: []*current.Interface{
+			{
+				Name: "eth0",
+				Mac:  "00:11:22:33:44:55",
+				Sandbox: "/proc/3553/ns/net",
+			},
+		},
+		IP: []*current.IPConfig{
+			{
+				Version: "4",
+				Interface: 0,
+				Address: *ipv4,
 				Gateway: net.ParseIP("1.2.3.1"),
 				Routes: []types.Route{
 					{Dst: *routev4, GW: routegwv4},
 				},
 			},
-			IP6: &current.IPConfig{
-				IP:      *ipv6,
+			{
+				Version: "6",
+				Interface: 0,
+				Address: *ipv6,
 				Gateway: net.ParseIP("abcd:1234:ffff::1"),
 				Routes: []types.Route{
 					{Dst: *routev6, GW: routegwv6},
 				},
 			},
-			DNS: types.DNS{
-				Nameservers: []string{"1.2.3.4", "1::cafe"},
-				Domain:      "acompany.com",
-				Search:      []string{"somedomain.com", "otherdomain.net"},
-				Options:     []string{"foo", "bar"},
-			},
-		}
+		},
+		DNS: types.DNS{
+			Nameservers: []string{"1.2.3.4", "1::cafe"},
+			Domain:      "acompany.com",
+			Search:      []string{"somedomain.com", "otherdomain.net"},
+			Options:     []string{"foo", "bar"},
+		},
+	}
+}
+
+var _ = Describe("Ensures compatibility with the 0.3.0 spec", func() {
+	It("correctly encodes a 0.3.0 Result", func() {
+		res := testResult()
+
+		Expect(res.String()).To(Equal("Interfaces:[{Name:eth0 Mac:00:11:22:33:44:55 Sandbox:/proc/3553/ns/net}], IP:[{Version:4 Interface:0 Address:{IP:1.2.3.30 Mask:ffffff00} Gateway:1.2.3.1 Routes:[{Dst:{IP:15.5.6.0 Mask:ffffff00} GW:15.5.6.8}]} {Version:6 Interface:0 Address:{IP:abcd:1234:ffff::cdde Mask:ffffffffffffffff0000000000000000} Gateway:abcd:1234:ffff::1 Routes:[{Dst:{IP:1111:dddd:: Mask:ffffffffffffffffffff000000000000} GW:1111:dddd::aaaa}]}], DNS:{Nameservers:[1.2.3.4 1::cafe] Domain:acompany.com Search:[somedomain.com otherdomain.net] Options:[foo bar]}"))
+
+		// Redirect stdout to capture JSON result
+		oldStdout := os.Stdout
+		r, w, err := os.Pipe()
+		Expect(err).NotTo(HaveOccurred())
+
+		os.Stdout = w
+		err = res.Print()
+		w.Close()
+		Expect(err).NotTo(HaveOccurred())
+
+		// parse the result
+		out, err := ioutil.ReadAll(r)
+		os.Stdout = oldStdout
+		Expect(err).NotTo(HaveOccurred())
+
+		Expect(string(out)).To(Equal(`{
+    "interfaces": [
+        {
+            "name": "eth0",
+            "mac": "00:11:22:33:44:55",
+            "sandbox": "/proc/3553/ns/net"
+        }
+    ],
+    "ip": [
+        {
+            "version": "4",
+            "address": "1.2.3.30/24",
+            "gateway": "1.2.3.1",
+            "routes": [
+                {
+                    "dst": "15.5.6.0/24",
+                    "gw": "15.5.6.8"
+                }
+            ]
+        },
+        {
+            "version": "6",
+            "address": "abcd:1234:ffff::cdde/64",
+            "gateway": "abcd:1234:ffff::1",
+            "routes": [
+                {
+                    "dst": "1111:dddd::/80",
+                    "gw": "1111:dddd::aaaa"
+                }
+            ]
+        }
+    ],
+    "dns": {
+        "nameservers": [
+            "1.2.3.4",
+            "1::cafe"
+        ],
+        "domain": "acompany.com",
+        "search": [
+            "somedomain.com",
+            "otherdomain.net"
+        ],
+        "options": [
+            "foo",
+            "bar"
+        ]
+    }
+}`))
+	})
+
+var _ = Describe("Ensures compatibility with the 0.1.0 spec", func() {
+	It("correctly encodes a 0.1.0 Result", func() {
+		res, err := testResult().GetAsVersion("0.1.0")
+		Expect(err).NotTo(HaveOccurred())
 
 		Expect(res.String()).To(Equal("IP4:{IP:{IP:1.2.3.30 Mask:ffffff00} Gateway:1.2.3.1 Routes:[{Dst:{IP:15.5.6.0 Mask:ffffff00} GW:15.5.6.8}]}, IP6:{IP:{IP:abcd:1234:ffff::cdde Mask:ffffffffffffffff0000000000000000} Gateway:abcd:1234:ffff::1 Routes:[{Dst:{IP:1111:dddd:: Mask:ffffffffffffffffffff000000000000} GW:1111:dddd::aaaa}]}, DNS:{Nameservers:[1.2.3.4 1::cafe] Domain:acompany.com Search:[somedomain.com otherdomain.net] Options:[foo bar]}"))
 
@@ -125,4 +214,4 @@ var _ = Describe("Ensures compatibility with the 0.1.0 spec", func() {
     }
 }`))
 	})
-})
+})})

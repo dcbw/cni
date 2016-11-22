@@ -131,7 +131,7 @@ var _ = Describe("host-local ip allocator", func() {
 			for _, tc := range testCases {
 				res, err := tc.run()
 				Expect(err).ToNot(HaveOccurred())
-				Expect(res.IP.IP.String()).To(Equal(tc.expectResult))
+				Expect(res.Address.IP.String()).To(Equal(tc.expectResult))
 			}
 		})
 
@@ -153,7 +153,7 @@ var _ = Describe("host-local ip allocator", func() {
 				Expect(err).ToNot(HaveOccurred())
 				// i+1 because the gateway address is skipped
 				s := fmt.Sprintf("192.168.1.%d/24", i+1)
-				Expect(s).To(Equal(res.IP.String()))
+				Expect(s).To(Equal(res.Address.String()))
 			}
 
 			_, err = alloc.Get("ID")
@@ -176,11 +176,11 @@ var _ = Describe("host-local ip allocator", func() {
 
 			res, err := alloc.Get("ID")
 			Expect(err).ToNot(HaveOccurred())
-			Expect(res.IP.String()).To(Equal("192.168.1.10/24"))
+			Expect(res.Address.String()).To(Equal("192.168.1.10/24"))
 
 			res, err = alloc.Get("ID")
 			Expect(err).ToNot(HaveOccurred())
-			Expect(res.IP.String()).To(Equal("192.168.1.11/24"))
+			Expect(res.Address.String()).To(Equal("192.168.1.11/24"))
 		})
 
 		It("should allocate RangeEnd but not past RangeEnd", func() {
@@ -201,7 +201,7 @@ var _ = Describe("host-local ip allocator", func() {
 				res, err := alloc.Get("ID")
 				Expect(err).ToNot(HaveOccurred())
 				// i+1 because the gateway address is skipped
-				Expect(res.IP.String()).To(Equal(fmt.Sprintf("192.168.1.%d/24", i+1)))
+				Expect(res.Address.String()).To(Equal(fmt.Sprintf("192.168.1.%d/24", i+1)))
 			}
 
 			_, err = alloc.Get("ID")
@@ -224,7 +224,7 @@ var _ = Describe("host-local ip allocator", func() {
 				alloc, _ := NewIPAllocator(&conf, store)
 				res, err := alloc.Get("ID")
 				Expect(err).ToNot(HaveOccurred())
-				Expect(res.IP.IP.String()).To(Equal(requestedIP.String()))
+				Expect(res.Address.IP.String()).To(Equal(requestedIP.String()))
 			})
 
 			It("must return an error when the requested IP is after RangeEnd", func() {

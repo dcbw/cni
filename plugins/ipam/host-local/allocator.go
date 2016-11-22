@@ -164,7 +164,8 @@ func (a *IPAllocator) Get(id string) (*current.IPConfig, error) {
 
 		if reserved {
 			return &current.IPConfig{
-				IP:      net.IPNet{IP: requestedIP, Mask: a.conf.Subnet.Mask},
+				Version: "4",
+				Address: net.IPNet{IP: requestedIP, Mask: a.conf.Subnet.Mask},
 				Gateway: gw,
 				Routes:  a.conf.Routes,
 			}, nil
@@ -185,7 +186,8 @@ func (a *IPAllocator) Get(id string) (*current.IPConfig, error) {
 		}
 		if reserved {
 			return &current.IPConfig{
-				IP:      net.IPNet{IP: cur, Mask: a.conf.Subnet.Mask},
+				Version: "4",
+				Address: net.IPNet{IP: cur, Mask: a.conf.Subnet.Mask},
 				Gateway: gw,
 				Routes:  a.conf.Routes,
 			}, nil
