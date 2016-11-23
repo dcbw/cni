@@ -44,15 +44,15 @@ func init() {
 	runtime.LockOSThread()
 }
 
-func loadConf(bytes []byte) (*NetConf, error) {
+func loadConf(bytes []byte) (*NetConf, string, error) {
 	n := &NetConf{}
 	if err := json.Unmarshal(bytes, n); err != nil {
-		return nil, fmt.Errorf("failed to load netconf: %v", err)
+		return nil, "", fmt.Errorf("failed to load netconf: %v", err)
 	}
 	if n.Master == "" {
-		return nil, fmt.Errorf(`"master" field is required. It specifies the host interface name to virtualize`)
+		return nil, "", fmt.Errorf(`"master" field is required. It specifies the host interface name to virtualize`)
 	}
-	return n, nil
+	return n, n.CNIVersion, nil
 }
 
 func modeFromString(s string) (netlink.IPVlanMode, error) {
@@ -127,7 +127,7 @@ func createIpvlan(conf *NetConf, ifName string, netns ns.NetNS) (*current.Interf
 }
 
 func cmdAdd(args *skel.CmdArgs) error {
-	n, err := loadConf(args.StdinData)
+	n, cniVersion, err := loadConf(args.StdinData)
 	if err != nil {
 		return err
 	}
@@ -148,7 +148,8 @@ func cmdAdd(args *skel.CmdArgs) error {
 	if err != nil {
 		return err
 	}
-	result, err := current.GetResult(r)
+	// Convert whatever the IPAM result was into the current Result type
+	result, err := current.NewResultFromResult(r)
 	if err != nil {
 		return err
 	}
@@ -171,11 +172,12 @@ func cmdAdd(args *skel.CmdArgs) error {
 	}
 
 	result.DNS = n.DNS
-	return result.Print()
+
+	return types.PrintResult(result, cniVersion)
 }
 
 func cmdDel(args *skel.CmdArgs) error {
-	n, err := loadConf(args.StdinData)
+	n, _, err := loadConf(args.StdinData)
 	if err != nil {
 		return err
 	}

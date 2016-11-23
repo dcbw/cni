@@ -212,10 +212,12 @@ func cmdAdd(args *skel.CmdArgs) error {
 	if err != nil {
 		return err
 	}
-	result, err := current.GetResult(r)
+	// Convert whatever the IPAM result was into the current Result type
+	result, err := current.NewResultFromResult(r)
 	if err != nil {
 		return err
 	}
+
 	if len(result.IP) == 0 {
 		return errors.New("IPAM plugin returned missing IP config")
 	}
@@ -241,7 +243,8 @@ func cmdAdd(args *skel.CmdArgs) error {
 
 	result.DNS = conf.DNS
 	result.Interfaces = []*current.Interface{hostInterface, containerInterface}
-	return result.Print()
+
+	return types.PrintResult(result, conf.CNIVersion)
 }
 
 func cmdDel(args *skel.CmdArgs) error {

@@ -41,7 +41,7 @@ var resultConverters = []struct {
 	convert  func(types.Result) (*Result, error)
 }{
 	{types020.SupportedVersions, convertFrom020},
-	{SupportedVersions,          convertFrom030},
+	{SupportedVersions, convertFrom030},
 }
 
 func convertFrom020(result types.Result) (*Result, error) {
@@ -129,15 +129,15 @@ func (r *Result) convertTo020() (*types020.Result, error) {
 	for _, ip := range r.IP {
 		if ip.Version == "4" && oldResult.IP4 == nil {
 			oldResult.IP4 = &types020.IPConfig{
-				IP: ip.Address,
+				IP:      ip.Address,
 				Gateway: ip.Gateway,
-				Routes: ip.Routes,
+				Routes:  ip.Routes,
 			}
 		} else if ip.Version == "6" && oldResult.IP6 == nil {
 			oldResult.IP6 = &types020.IPConfig{
-				IP: ip.Address,
+				IP:      ip.Address,
 				Gateway: ip.Gateway,
-				Routes: ip.Routes,
+				Routes:  ip.Routes,
 			}
 		}
 		if oldResult.IP4 != nil && oldResult.IP6 != nil {

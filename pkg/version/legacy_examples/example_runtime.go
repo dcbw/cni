@@ -109,7 +109,7 @@ func exec() int {
 		fmt.Printf("AddNetwork failed: %+v", err)
 		return 2
 	}
-	fmt.Printf("AddNetwork result: %+v", result)
+	fmt.Printf("AddNetwork result: %+#v", result)
 
 	expectedIP := result.IP4.IP
 
