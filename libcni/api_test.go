@@ -54,7 +54,7 @@ var _ = Describe("Invoking the plugin", func() {
 		Expect(debug.WriteDebug(debugFilePath)).To(Succeed())
 
 		cniBinPath = filepath.Dir(pluginPaths["noop"])
-		pluginConfig = `{ "type": "noop", "some-key": "some-value", "cniVersion": "0.2.0" }`
+		pluginConfig = `{ "type": "noop", "some-key": "some-value", "cniVersion": "0.3.0" }`
 		cniConfig = libcni.CNIConfig{Path: []string{cniBinPath}}
 		netConfig = &libcni.NetworkConfig{
 			Network: &types.NetConf{
@@ -170,7 +170,7 @@ var _ = Describe("Invoking the plugin", func() {
 
 			Expect(versionInfo).NotTo(BeNil())
 			Expect(versionInfo.SupportedVersions()).To(Equal([]string{
-				"0.-42.0", "0.1.0", "0.2.0",
+				"0.-42.0", "0.1.0", "0.2.0", "0.3.0",
 			}))
 		})
 
