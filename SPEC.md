@@ -63,7 +63,7 @@ It should then assign the IP to the interface and setup the routes consistent wi
 
 The operations that CNI plugins must support are:
 
-- Add container to network
+- `ADD`: Add container to network
   - Parameters:
     - **Container ID**. A unique plaintext identifier for a container, allocated by the runtime. Must not be empty.
     - **Network namespace path**. This represents the path to the network namespace to be added, i.e. /proc/[pid]/ns/net or a bind-mount/link to it.
@@ -75,7 +75,7 @@ The operations that CNI plugins must support are:
     - **IP configuration assigned to each interface**. The IPv4 and/or IPv6 addresses, gateways, and routes assigned to sandbox and/or host interfaces.
     - **DNS information**. Dictionary that includes DNS information for nameservers, domain, search domains and options.
 
-- Delete container from network
+- `DEL`: Delete container from network
   - Parameters:
     - **Container ID**, as defined above.
     - **Network namespace path**, as defined above.
@@ -85,7 +85,28 @@ The operations that CNI plugins must support are:
   - All parameters should be the same as those passed to the corresponding add operation.
   - A delete operation should release all resources held by the supplied containerid in the configured network.
 
-- Report version
+- `GET`: Get container network configuration
+  - This action should return the same result as an `ADD` action for the same inputs. The result should not change over the lifetime of the container.
+  - The plugin should return an error if any general internal state is unexpected. For example, if the plugin's data storage is missing or corrupt, or it cannot talk to a controller (if it has one) controller, it should return an error.
+  - The plugin should not return an error if its expected sandbox state (eg interfaces, IP addresses, routes, etc) is not found, as subsequent plugins in the chain may alter this state.
+  - The plugin will be passed a `prevResult` field in its configuration JSON on stdin which contains the `Result` object which the plugin (or the chain of which the plugin is part) returned to the runtime 
+  regenerate as much of its `Result` object as it can, which may be modified by plugins in the chain. For example, if the plugin-created interface exists and has the expected IP address, the plugin should add the interface and address to its `Result`. If the plugin-created interface does not have the expected IP address, the plugin should add the interface (but not the expected IP address) to its `Result`.
+  - A runtime may call `GET` at any time; but if `GET` is called for a given container before an `ADD` or after a `DEL` for that container, the plugin should return error 3 to indicate the container is unknown (see [Well-known Error Codes](#well-known-error-codes) section).
+  - 
+  - Parameters:
+    - **Version**. The version of CNI spec that the caller is using (container management system or the invoking plugin).
+    - **Container ID**, as defined for `ADD`.
+    - **Network namespace path**, as defined for `ADD`.
+    - **Network configuration**, as defined for `ADD`.
+    - **Extra arguments**, as defined for `ADD`.
+    - **Name of the interface inside the container**, as defined for `ADD`.
+  - Result:
+    - The plugin should return the same result as an `ADD` action for the same inputs.
+    - **Interfaces list**, as defined for `ADD`
+    - **IP configuration assigned to each interface**, as defined for `ADD`
+    - **DNS information**, as defined for `ADD`
+
+- `VERSION`: Report version
   - Parameters: NONE.
   - Result: information about the CNI spec versions supported by the plugin
 
@@ -98,7 +119,7 @@ The operations that CNI plugins must support are:
 
 Runtimes must use the type of network (see [Network Configuration](#network-configuration) below) as the name of the executable to invoke.
 Runtimes should then look for this executable in a list of predefined directories (the list of directories is not prescribed by this specification). Once found, it must invoke the executable using the following environment variables for argument passing:
-- `CNI_COMMAND`: indicates the desired operation; `ADD`, `DEL` or `VERSION`.
+- `CNI_COMMAND`: indicates the desired operation; `ADD`, `DEL`, `GET`, or `VERSION`.
 - `CNI_CONTAINERID`: Container ID
 - `CNI_NETNS`: Path to network namespace file
 - `CNI_IFNAME`: Interface name to set up; if the plugin is unable to use this interface name it must return an error
@@ -273,8 +294,8 @@ The list is described in JSON form, and can be stored on disk or generated from 
 When executing a plugin list, the runtime MUST replace the `name` and `cniVersion` fields in each individual network configuration in the list with the `name` and `cniVersion` field of the list itself. This ensures that the name and CNI version is the same for all plugin executions in the list, preventing versioning conflicts between plugins.
 The runtime may also pass capability-based keys as a map in the top-level `runtimeConfig` key of the plugin's config JSON if a plugin advertises it supports a specific capability via the `capabilities` key of its network configuration.  The key passed in `runtimeConfig` MUST match the name of the specific capability from the `capabilities` key of the plugins network configuration. See CONVENTIONS.md for more information on capabilities and how they are sent to plugins via the `runtimeConfig` key.
 
-For the ADD action, the runtime MUST also add a `prevResult` field to the configuration JSON of any plugin after the first one, which MUST be the Result of the previous plugin (if any) in JSON format ([see below](#network-configuration-list-runtime-examples)).
-For the ADD action, plugins SHOULD echo the contents of the `prevResult` field to their stdout to allow subsequent plugins (and the runtime) to receive the result, unless they wish to modify or suppress a previous result.
+For the `ADD` and `GET` actions, the runtime MUST also add a `prevResult` field to the configuration JSON of any plugin after the first one, which MUST be the Result of the previous plugin (if any) in JSON format ([see below](#network-configuration-list-runtime-examples)).
+For the `ADD` and `GET` actions, plugins SHOULD echo the contents of the `prevResult` field to their stdout to allow subsequent plugins (and the runtime) to receive the result, unless they wish to modify or suppress a previous result.
 Plugins are allowed to modify or suppress all or part of a `prevResult`.
 However, plugins that support a version of the CNI specification that includes the `prevResult` field MUST handle `prevResult` by either passing it through, modifying it, or suppressing it explicitly.
 It is a violation of this specification to be unaware of the `prevResult` field.
@@ -552,3 +573,4 @@ Error codes 1-99 must not be used other than as specified here.
 
 - `1` - Incompatible CNI version
 - `2` - Unsupported field in network configuration. The error message must contain the key and value of the unsupported field.
+- `3` - Container unknown or does not exist.
