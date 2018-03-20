@@ -94,7 +94,6 @@ The operations that CNI plugins must support are:
   - A runtime may call `GET` at any time; but if `GET` is called for a given container before an `ADD` or after a `DEL` for that container, the plugin should return error 3 to indicate the container is unknown (see [Well-known Error Codes](#well-known-error-codes) section).
   - 
   - Parameters:
-    - **Version**. The version of CNI spec that the caller is using (container management system or the invoking plugin).
     - **Container ID**, as defined for `ADD`.
     - **Network namespace path**, as defined for `ADD`.
     - **Network configuration**, as defined for `ADD`.
