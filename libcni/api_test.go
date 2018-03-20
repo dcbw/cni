@@ -116,7 +116,23 @@ func newPluginInfo(configValue, prevResult string, injectDebugFilePath bool, res
 	}
 }
 
+func resultCacheFilePath(cacheDirPath, netName, containerID string) string {
+	return filepath.Join(cacheDirPath, "results", netName+"-"+containerID)
+}
+
 var _ = Describe("Invoking plugins", func() {
+	var cacheDirPath string
+
+	BeforeEach(func() {
+		var err error
+		cacheDirPath, err = ioutil.TempDir("", "cni_cachedir")
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	AfterEach(func() {
+		Expect(os.RemoveAll(cacheDirPath)).To(Succeed())
+	})
+
 	Describe("Capabilities", func() {
 		var (
 			debugFilePath string
@@ -164,6 +180,7 @@ var _ = Describe("Invoking plugins", func() {
 					"noCapability":  true,
 					"notAdded":      []bool{true, false},
 				},
+				CacheDir: cacheDirPath,
 			}
 		})
 
@@ -243,7 +260,11 @@ var _ = Describe("Invoking plugins", func() {
 			debugFilePath = debugFile.Name()
 
 			debug = &noop_debug.Debug{
-				ReportResult: `{ "ips": [{ "version": "4", "address": "10.1.2.3/24" }], "dns": {} }`,
+				ReportResult: `{
+					"cniVersion": "0.4.0",
+					"ips": [{"version": "4", "address": "10.1.2.3/24"}],
+					"dns": {}
+				}`,
 			}
 			Expect(debug.WriteDebug(debugFilePath)).To(Succeed())
 
@@ -266,6 +287,7 @@ var _ = Describe("Invoking plugins", func() {
 				ContainerID: "some-container-id",
 				NetNS:       "/some/netns/path",
 				IfName:      "some-eth0",
+				CacheDir:    cacheDirPath,
 				Args:        [][2]string{{"DEBUG", debugFilePath}},
 				CapabilityArgs: map[string]interface{}{
 					"portMappings": portMappings,
@@ -322,6 +344,16 @@ var _ = Describe("Invoking plugins", func() {
 				Expect(debug.Command).To(Equal("ADD"))
 				Expect(debug.CmdArgs).To(Equal(expectedCmdArgs))
 				Expect(string(debug.CmdArgs.StdinData)).To(ContainSubstring("\"portMappings\":"))
+
+				// Ensure the cached result matches the returned one
+				cacheFile := resultCacheFilePath(cacheDirPath, netConfig.Network.Name, runtimeConfig.ContainerID)
+				_, err = os.Stat(cacheFile)
+				Expect(err).NotTo(HaveOccurred())
+				cachedData, err := ioutil.ReadFile(cacheFile)
+				Expect(err).NotTo(HaveOccurred())
+				returnedData, err := json.Marshal(result)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(cachedData).To(MatchJSON(returnedData))
 			})
 
 			Context("when finding the plugin fails", func() {
@@ -342,6 +374,58 @@ var _ = Describe("Invoking plugins", func() {
 				})
 				It("unmarshals and returns the error", func() {
 					result, err := cniConfig.AddNetwork(netConfig, runtimeConfig)
+					Expect(result).To(BeNil())
+					Expect(err).To(MatchError("plugin error: banana"))
+				})
+			})
+		})
+
+		Describe("GetNetwork", func() {
+			It("executes the plugin with command GET", func() {
+				r, err := cniConfig.GetNetwork(netConfig, runtimeConfig)
+				Expect(err).NotTo(HaveOccurred())
+
+				result, err := current.GetResult(r)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(result).To(Equal(&current.Result{
+					CNIVersion: current.ImplementedSpecVersion,
+					IPs: []*current.IPConfig{
+						{
+							Version: "4",
+							Address: net.IPNet{
+								IP:   net.ParseIP("10.1.2.3"),
+								Mask: net.IPv4Mask(255, 255, 255, 0),
+							},
+						},
+					},
+				}))
+
+				debug, err := noop_debug.ReadDebug(debugFilePath)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(debug.Command).To(Equal("GET"))
+				Expect(debug.CmdArgs).To(Equal(expectedCmdArgs))
+				Expect(string(debug.CmdArgs.StdinData)).To(ContainSubstring("\"portMappings\":"))
+			})
+
+			Context("when finding the plugin fails", func() {
+				BeforeEach(func() {
+					netConfig.Network.Type = "does-not-exist"
+				})
+
+				It("returns the error", func() {
+					_, err := cniConfig.GetNetwork(netConfig, runtimeConfig)
+					Expect(err).To(MatchError(ContainSubstring(`failed to find plugin "does-not-exist"`)))
+				})
+			})
+
+			Context("when the plugin errors", func() {
+				BeforeEach(func() {
+					debug.ReportError = "plugin error: banana"
+					Expect(debug.WriteDebug(debugFilePath)).To(Succeed())
+				})
+				It("unmarshals and returns the error", func() {
+					result, err := cniConfig.GetNetwork(netConfig, runtimeConfig)
 					Expect(result).To(BeNil())
 					Expect(err).To(MatchError("plugin error: banana"))
 				})
@@ -432,6 +516,7 @@ var _ = Describe("Invoking plugins", func() {
 				IfName:         "some-eth0",
 				Args:           [][2]string{{"FOO", "BAR"}},
 				CapabilityArgs: capabilityArgs,
+				CacheDir:       cacheDirPath,
 			}
 
 			expectedCmdArgs = skel.CmdArgs{
@@ -535,6 +620,68 @@ var _ = Describe("Invoking plugins", func() {
 				})
 				It("unmarshals and returns the error", func() {
 					result, err := cniConfig.AddNetworkList(netConfigList, runtimeConfig)
+					Expect(result).To(BeNil())
+					Expect(err).To(MatchError("plugin error: banana"))
+				})
+			})
+		})
+
+		Describe("GetNetworkList", func() {
+			It("executes all plugins with command GET and returns an intermediate result", func() {
+				r, err := cniConfig.GetNetworkList(netConfigList, runtimeConfig)
+				Expect(err).NotTo(HaveOccurred())
+
+				result, err := current.GetResult(r)
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(result).To(Equal(&current.Result{
+					CNIVersion: current.ImplementedSpecVersion,
+					// IP4 added by first plugin
+					IPs: []*current.IPConfig{
+						{
+							Version: "4",
+							Address: net.IPNet{
+								IP:   net.ParseIP("10.1.2.3"),
+								Mask: net.IPv4Mask(255, 255, 255, 0),
+							},
+						},
+					},
+					// DNS injected by last plugin
+					DNS: types.DNS{
+						Nameservers: []string{"1.2.3.4"},
+					},
+				}))
+
+				for i := 0; i < len(plugins); i++ {
+					debug, err := noop_debug.ReadDebug(plugins[i].debugFilePath)
+					Expect(err).NotTo(HaveOccurred())
+					Expect(debug.Command).To(Equal("GET"))
+
+					// Must explicitly match JSON due to dict element ordering
+					Expect(debug.CmdArgs.StdinData).To(MatchJSON(plugins[i].stdinData))
+					debug.CmdArgs.StdinData = nil
+					Expect(debug.CmdArgs).To(Equal(expectedCmdArgs))
+				}
+			})
+
+			Context("when finding the plugin fails", func() {
+				BeforeEach(func() {
+					netConfigList.Plugins[1].Network.Type = "does-not-exist"
+				})
+
+				It("returns the error", func() {
+					_, err := cniConfig.GetNetworkList(netConfigList, runtimeConfig)
+					Expect(err).To(MatchError(ContainSubstring(`failed to find plugin "does-not-exist"`)))
+				})
+			})
+
+			Context("when the second plugin errors", func() {
+				BeforeEach(func() {
+					plugins[1].debug.ReportError = "plugin error: banana"
+					Expect(plugins[1].debug.WriteDebug(plugins[1].debugFilePath)).To(Succeed())
+				})
+				It("unmarshals and returns the error", func() {
+					result, err := cniConfig.GetNetworkList(netConfigList, runtimeConfig)
 					Expect(result).To(BeNil())
 					Expect(err).To(MatchError("plugin error: banana"))
 				})
