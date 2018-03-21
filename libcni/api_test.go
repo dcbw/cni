@@ -430,6 +430,54 @@ var _ = Describe("Invoking plugins", func() {
 					Expect(err).To(MatchError("plugin error: banana"))
 				})
 			})
+
+			Context("when the the cached result", func() {
+				var cacheFile string
+
+				BeforeEach(func() {
+					cacheFile = resultCacheFilePath(cacheDirPath, netConfig.Network.Name, runtimeConfig.ContainerID)
+					err := os.MkdirAll(filepath.Dir(cacheFile), 0700)
+					Expect(err).NotTo(HaveOccurred())
+				})
+
+				Context("is invalid JSON", func() {
+					It("returns an error", func() {
+						err := ioutil.WriteFile(cacheFile, []byte("adfadsfasdfasfdsafaf"), 0600)
+						Expect(err).NotTo(HaveOccurred())
+
+						result, err := cniConfig.GetNetwork(netConfig, runtimeConfig)
+						Expect(result).To(BeNil())
+						Expect(err).To(MatchError("decoding version from network config: invalid character 'a' looking for beginning of value"))
+					})
+				})
+
+				Context("version doesn't match the config version", func() {
+					It("succeeds when the cached result can be converted", func() {
+						err := ioutil.WriteFile(cacheFile, []byte(`{
+	"cniVersion": "0.3.1",
+	"ips": [{"version": "4", "address": "10.1.2.3/24"}],
+	"dns": {}
+}`), 0600)
+						Expect(err).NotTo(HaveOccurred())
+
+						_, err = cniConfig.GetNetwork(netConfig, runtimeConfig)
+						Expect(err).NotTo(HaveOccurred())
+					})
+
+					It("returns an error when the cached result cannot be converted", func() {
+						err := ioutil.WriteFile(cacheFile, []byte(`{
+	"cniVersion": "0.4567.0",
+	"ips": [{"version": "4", "address": "10.1.2.3/24"}],
+	"dns": {}
+}`), 0600)
+						Expect(err).NotTo(HaveOccurred())
+
+						result, err := cniConfig.GetNetwork(netConfig, runtimeConfig)
+						Expect(result).To(BeNil())
+						Expect(err).To(MatchError("unsupported CNI result version \"0.4567.0\""))
+					})
+				})
+			})
 		})
 
 		Describe("DelNetwork", func() {
@@ -463,6 +511,52 @@ var _ = Describe("Invoking plugins", func() {
 				It("unmarshals and returns the error", func() {
 					err := cniConfig.DelNetwork(netConfig, runtimeConfig)
 					Expect(err).To(MatchError("plugin error: banana"))
+				})
+			})
+
+			Context("when the the cached result", func() {
+				var cacheFile string
+
+				BeforeEach(func() {
+					cacheFile = resultCacheFilePath(cacheDirPath, netConfig.Network.Name, runtimeConfig.ContainerID)
+					err := os.MkdirAll(filepath.Dir(cacheFile), 0700)
+					Expect(err).NotTo(HaveOccurred())
+				})
+
+				Context("is invalid JSON", func() {
+					It("returns an error", func() {
+						err := ioutil.WriteFile(cacheFile, []byte("adfadsfasdfasfdsafaf"), 0600)
+						Expect(err).NotTo(HaveOccurred())
+
+						err = cniConfig.DelNetwork(netConfig, runtimeConfig)
+						Expect(err).To(MatchError("decoding version from network config: invalid character 'a' looking for beginning of value"))
+					})
+				})
+
+				Context("version doesn't match the config version", func() {
+					It("succeeds when the cached result can be converted", func() {
+						err := ioutil.WriteFile(cacheFile, []byte(`{
+	"cniVersion": "0.3.1",
+	"ips": [{"version": "4", "address": "10.1.2.3/24"}],
+	"dns": {}
+}`), 0600)
+						Expect(err).NotTo(HaveOccurred())
+
+						err = cniConfig.DelNetwork(netConfig, runtimeConfig)
+						Expect(err).NotTo(HaveOccurred())
+					})
+
+					It("returns an error when the cached result cannot be converted", func() {
+						err := ioutil.WriteFile(cacheFile, []byte(`{
+	"cniVersion": "0.4567.0",
+	"ips": [{"version": "4", "address": "10.1.2.3/24"}],
+	"dns": {}
+}`), 0600)
+						Expect(err).NotTo(HaveOccurred())
+
+						err = cniConfig.DelNetwork(netConfig, runtimeConfig)
+						Expect(err).To(MatchError("unsupported CNI result version \"0.4567.0\""))
+					})
 				})
 			})
 		})

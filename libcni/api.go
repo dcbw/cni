@@ -179,7 +179,7 @@ func setCachedResult(result types.Result, netName string, rt *RuntimeConf) error
 	return ioutil.WriteFile(fname, data, 0600)
 }
 
-func getCachedResult(netName string, rt *RuntimeConf) (types.Result, error) {
+func getCachedResult(netName, cniVersion string, rt *RuntimeConf) (types.Result, error) {
 	fname := getResultCacheFilePath(netName, rt)
 	data, err := ioutil.ReadFile(fname)
 	if err != nil {
@@ -187,13 +187,30 @@ func getCachedResult(netName string, rt *RuntimeConf) (types.Result, error) {
 		return nil, nil
 	}
 
+	// Read the version of the cached result
 	decoder := version.ConfigDecoder{}
-	cniVersion, err := decoder.Decode(data)
+	resultCniVersion, err := decoder.Decode(data)
 	if err != nil {
 		return nil, err
 	}
 
-	return version.NewResult(cniVersion, data)
+	// Ensure we can understand the result
+	result, err := version.NewResult(resultCniVersion, data)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert to the config version to ensure plugins get prevResult
+	// in the same version as the config
+	result, err = result.GetAsVersion(cniVersion)
+	if err != nil && resultCniVersion != cniVersion {
+		// The cached result version should match the config version
+		// unless the config was changed while the container was
+		// running.  If that happens and conversion fails, return a
+		// more descriptive error.
+		return nil, fmt.Errorf("failed to convert cached result version %q to config version %q: %v", resultCniVersion, cniVersion, err)
+	}
+	return result, err
 }
 
 // AddNetworkList executes a sequence of plugins with the ADD command
@@ -212,7 +229,7 @@ func (c *CNIConfig) AddNetworkList(list *NetworkConfigList, rt *RuntimeConf) (ty
 
 // GetNetworkList executes a sequence of plugins with the GET command
 func (c *CNIConfig) GetNetworkList(list *NetworkConfigList, rt *RuntimeConf) (types.Result, error) {
-	cachedResult, err := getCachedResult(list.Name, rt)
+	cachedResult, err := getCachedResult(list.Name, list.CNIVersion, rt)
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +252,7 @@ func (c *CNIConfig) delNetwork(name, cniVersion string, net *NetworkConfig, prev
 
 // DelNetworkList executes a sequence of plugins with the DEL command
 func (c *CNIConfig) DelNetworkList(list *NetworkConfigList, rt *RuntimeConf) error {
-	cachedResult, err := getCachedResult(list.Name, rt)
+	cachedResult, err := getCachedResult(list.Name, list.CNIVersion, rt)
 	if err != nil {
 		return err
 	}
@@ -265,7 +282,7 @@ func (c *CNIConfig) AddNetwork(net *NetworkConfig, rt *RuntimeConf) (types.Resul
 
 // GetNetwork executes the plugin with the GET command
 func (c *CNIConfig) GetNetwork(net *NetworkConfig, rt *RuntimeConf) (types.Result, error) {
-	cachedResult, err := getCachedResult(net.Network.Name, rt)
+	cachedResult, err := getCachedResult(net.Network.Name, net.Network.CNIVersion, rt)
 	if err != nil {
 		return nil, err
 	}
@@ -274,7 +291,7 @@ func (c *CNIConfig) GetNetwork(net *NetworkConfig, rt *RuntimeConf) (types.Resul
 
 // DelNetwork executes the plugin with the DEL command
 func (c *CNIConfig) DelNetwork(net *NetworkConfig, rt *RuntimeConf) error {
-	cachedResult, err := getCachedResult(net.Network.Name, rt)
+	cachedResult, err := getCachedResult(net.Network.Name, net.Network.CNIVersion, rt)
 	if err != nil {
 		return err
 	}
