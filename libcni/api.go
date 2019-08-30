@@ -82,8 +82,18 @@ type CNI interface {
 	GetNetworkCachedResult(net *NetworkConfig, rt *RuntimeConf) (types.Result, error)
 	GetNetworkCachedConfig(net *NetworkConfig, rt *RuntimeConf) ([]byte, *RuntimeConf, error)
 
+	GetContainerCachedInfo(containerID string) ([]CachedInfo, error)
+
 	ValidateNetworkList(ctx context.Context, net *NetworkConfigList) ([]string, error)
 	ValidateNetwork(ctx context.Context, net *NetworkConfig) ([]string, error)
+}
+
+type CachedInfo struct {
+	NetworkName string
+	IfName      string
+	Config      []byte
+	RtConf      *RuntimeConf
+	Result      types.Result
 }
 
 type CNIConfig struct {
